@@ -2,15 +2,12 @@ use anyhow::Result;
 use std::sync::Arc;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 
-use crate::ipc::{Request, Response};
 use super::cache::DbCache;
 use super::query::Names;
+use crate::ipc::{Request, Response};
 
 /// 启动 IPC server（Unix socket / Windows named pipe）
-pub async fn serve(
-    db: Arc<DbCache>,
-    names: Arc<tokio::sync::RwLock<Arc<Names>>>,
-) -> Result<()> {
+pub async fn serve(db: Arc<DbCache>, names: Arc<tokio::sync::RwLock<Arc<Names>>>) -> Result<()> {
     #[cfg(unix)]
     serve_unix(db, names).await?;
     #[cfg(windows)]
@@ -19,10 +16,7 @@ pub async fn serve(
 }
 
 #[cfg(unix)]
-async fn serve_unix(
-    db: Arc<DbCache>,
-    names: Arc<tokio::sync::RwLock<Arc<Names>>>,
-) -> Result<()> {
+async fn serve_unix(db: Arc<DbCache>, names: Arc<tokio::sync::RwLock<Arc<Names>>>) -> Result<()> {
     use tokio::net::UnixListener;
     let sock_path = crate::config::sock_path();
 
@@ -88,9 +82,7 @@ async fn serve_windows(
     db: Arc<DbCache>,
     names: Arc<tokio::sync::RwLock<Arc<Names>>>,
 ) -> Result<()> {
-    use interprocess::local_socket::{
-        tokio::prelude::*, GenericNamespaced, ListenerOptions,
-    };
+    use interprocess::local_socket::{tokio::prelude::*, GenericNamespaced, ListenerOptions};
 
     // interprocess 的 GenericNamespaced 在 Windows 上会自动拼接 `\\.\pipe\` 前缀，
     // 这里必须传相对名；client 端用 `\\.\pipe\wx-cli-daemon` 直接打开可以对上
@@ -141,13 +133,9 @@ async fn handle_connection_windows(
     Ok(())
 }
 
-async fn dispatch(
-    req: Request,
-    db: &DbCache,
-    names: &tokio::sync::RwLock<Arc<Names>>,
-) -> Response {
-    use crate::ipc::Request::*;
+async fn dispatch(req: Request, db: &DbCache, names: &tokio::sync::RwLock<Arc<Names>>) -> Response {
     use super::query;
+    use crate::ipc::Request::*;
 
     // 取 guard → O(1) clone Arc → 立即 drop 锁。后续 await 期间不持有锁，
     // 多个并发 IPC 请求可以真正并行。Names 本身不可变（由 daemon 启动时
@@ -159,20 +147,38 @@ async fn dispatch(
 
     match req {
         Ping => Response::ok(serde_json::json!({ "pong": true })),
-        Sessions { limit } => {
-            match query::q_sessions(db, &names_arc, limit).await {
+        Sessions { limit } => match query::q_sessions(db, &names_arc, limit).await {
+            Ok(v) => Response::ok(v),
+            Err(e) => Response::err(e.to_string()),
+        },
+        History {
+            chat,
+            limit,
+            offset,
+            since,
+            until,
+            msg_type,
+        } => {
+            match query::q_history(db, &names_arc, &chat, limit, offset, since, until, msg_type)
+                .await
+            {
                 Ok(v) => Response::ok(v),
                 Err(e) => Response::err(e.to_string()),
             }
         }
-        History { chat, limit, offset, since, until, msg_type } => {
-            match query::q_history(db, &names_arc, &chat, limit, offset, since, until, msg_type).await {
-                Ok(v) => Response::ok(v),
-                Err(e) => Response::err(e.to_string()),
-            }
-        }
-        Search { keyword, chats, limit, since, until, msg_type } => {
-            match query::q_search(db, &names_arc, &keyword, chats, limit, since, until, msg_type).await {
+        Search {
+            keyword,
+            chats,
+            limit,
+            since,
+            until,
+            msg_type,
+        } => {
+            match query::q_search(
+                db, &names_arc, &keyword, chats, limit, since, until, msg_type,
+            )
+            .await
+            {
                 Ok(v) => Response::ok(v),
                 Err(e) => Response::err(e.to_string()),
             }
@@ -183,50 +189,74 @@ async fn dispatch(
                 Err(e) => Response::err(e.to_string()),
             }
         }
-        Unread { limit, filter } => {
-            match query::q_unread(db, &names_arc, limit, filter).await {
-                Ok(v) => Response::ok(v),
-                Err(e) => Response::err(e.to_string()),
-            }
-        }
-        Members { chat } => {
-            match query::q_members(db, &names_arc, &chat).await {
-                Ok(v) => Response::ok(v),
-                Err(e) => Response::err(e.to_string()),
-            }
-        }
+        Unread { limit, filter } => match query::q_unread(db, &names_arc, limit, filter).await {
+            Ok(v) => Response::ok(v),
+            Err(e) => Response::err(e.to_string()),
+        },
+        Members { chat } => match query::q_members(db, &names_arc, &chat).await {
+            Ok(v) => Response::ok(v),
+            Err(e) => Response::err(e.to_string()),
+        },
         NewMessages { state, limit } => {
             match query::q_new_messages(db, &names_arc, state, limit).await {
                 Ok(v) => Response::ok(v),
                 Err(e) => Response::err(e.to_string()),
             }
         }
-        Favorites { limit, fav_type, query } => {
-            match query::q_favorites(db, limit, fav_type, query).await {
-                Ok(v) => Response::ok(v),
-                Err(e) => Response::err(e.to_string()),
-            }
-        }
+        Favorites {
+            limit,
+            fav_type,
+            query,
+        } => match query::q_favorites(db, limit, fav_type, query).await {
+            Ok(v) => Response::ok(v),
+            Err(e) => Response::err(e.to_string()),
+        },
         Stats { chat, since, until } => {
             match query::q_stats(db, &names_arc, &chat, since, until).await {
                 Ok(v) => Response::ok(v),
                 Err(e) => Response::err(e.to_string()),
             }
         }
-        SnsNotifications { limit, since, until, include_read } => {
-            match query::q_sns_notifications(db, &names_arc, limit, since, until, include_read).await {
+        SnsNotifications {
+            limit,
+            since,
+            until,
+            include_read,
+        } => {
+            match query::q_sns_notifications(db, &names_arc, limit, since, until, include_read)
+                .await
+            {
                 Ok(v) => Response::ok(v),
                 Err(e) => Response::err(e.to_string()),
             }
         }
-        SnsFeed { limit, since, until, user } => {
-            match query::q_sns_feed(db, &names_arc, limit, since, until, user.as_deref()).await {
-                Ok(v) => Response::ok(v),
-                Err(e) => Response::err(e.to_string()),
-            }
-        }
-        SnsSearch { keyword, limit, since, until, user } => {
-            match query::q_sns_search(db, &names_arc, &keyword, limit, since, until, user.as_deref()).await {
+        SnsFeed {
+            limit,
+            since,
+            until,
+            user,
+        } => match query::q_sns_feed(db, &names_arc, limit, since, until, user.as_deref()).await {
+            Ok(v) => Response::ok(v),
+            Err(e) => Response::err(e.to_string()),
+        },
+        SnsSearch {
+            keyword,
+            limit,
+            since,
+            until,
+            user,
+        } => {
+            match query::q_sns_search(
+                db,
+                &names_arc,
+                &keyword,
+                limit,
+                since,
+                until,
+                user.as_deref(),
+            )
+            .await
+            {
                 Ok(v) => Response::ok(v),
                 Err(e) => Response::err(e.to_string()),
             }

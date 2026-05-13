@@ -1,7 +1,7 @@
-use anyhow::Result;
-use crate::config;
-use crate::cli::DaemonCommands;
 use crate::cli::transport;
+use crate::cli::DaemonCommands;
+use crate::config;
+use anyhow::Result;
 
 pub fn cmd_daemon(cmd: DaemonCommands) -> Result<()> {
     match cmd {
@@ -32,7 +32,9 @@ fn cmd_stop() -> Result<()> {
     }
 
     let pid_str = std::fs::read_to_string(&pid_path)?;
-    let pid: u32 = pid_str.trim().parse()
+    let pid: u32 = pid_str
+        .trim()
+        .parse()
         .map_err(|_| anyhow::anyhow!("PID 文件格式错误"))?;
 
     #[cfg(unix)]
@@ -89,19 +91,25 @@ fn cmd_logs(follow: bool, lines: usize) -> Result<()> {
             file.read_to_string(&mut content)?;
             let all_lines: Vec<&str> = content.lines().collect();
             let show = &all_lines[all_lines.len().saturating_sub(lines)..];
-            for line in show { println!("{}", line); }
+            for line in show {
+                println!("{}", line);
+            }
             loop {
                 std::thread::sleep(std::time::Duration::from_millis(500));
                 let mut buf = String::new();
                 file.read_to_string(&mut buf)?;
-                if !buf.is_empty() { print!("{}", buf); }
+                if !buf.is_empty() {
+                    print!("{}", buf);
+                }
             }
         }
     } else {
         let content = std::fs::read_to_string(&log_path)?;
         let all_lines: Vec<&str> = content.lines().collect();
         let show = &all_lines[all_lines.len().saturating_sub(lines)..];
-        for line in show { println!("{}", line); }
+        for line in show {
+            println!("{}", line);
+        }
     }
 
     Ok(())

@@ -1,20 +1,20 @@
-mod init;
-pub mod sessions;
-pub mod history;
-pub mod search;
 pub mod contacts;
-pub mod export;
 pub mod daemon_cmd;
-pub mod transport;
-pub mod output;
-pub mod unread;
+pub mod export;
+pub mod favorites;
+pub mod history;
+mod init;
 pub mod members;
 pub mod new_messages;
-pub mod stats;
-pub mod favorites;
-pub mod sns_notifications;
+pub mod output;
+pub mod search;
+pub mod sessions;
 pub mod sns_feed;
+pub mod sns_notifications;
 pub mod sns_search;
+pub mod stats;
+pub mod transport;
+pub mod unread;
 
 use anyhow::Result;
 use clap::{Parser, Subcommand};
@@ -276,34 +276,74 @@ fn dispatch(cli: Cli) -> Result<()> {
     match cli.command {
         Commands::Init { force } => init::cmd_init(force),
         Commands::Sessions { limit, json } => sessions::cmd_sessions(limit, json),
-        Commands::History { chat, limit, offset, since, until, msg_type, json } => {
-            history::cmd_history(chat, limit, offset, since, until, msg_type, json)
-        }
-        Commands::Search { keyword, chats, limit, since, until, msg_type, json } => {
-            search::cmd_search(keyword, chats, limit, since, until, msg_type, json)
-        }
+        Commands::History {
+            chat,
+            limit,
+            offset,
+            since,
+            until,
+            msg_type,
+            json,
+        } => history::cmd_history(chat, limit, offset, since, until, msg_type, json),
+        Commands::Search {
+            keyword,
+            chats,
+            limit,
+            since,
+            until,
+            msg_type,
+            json,
+        } => search::cmd_search(keyword, chats, limit, since, until, msg_type, json),
         Commands::Contacts { query, limit, json } => contacts::cmd_contacts(query, limit, json),
-        Commands::Export { chat, since, until, limit, format, output } => {
-            export::cmd_export(chat, since, until, limit, format, output)
-        }
-        Commands::Unread { limit, filter, json } => unread::cmd_unread(limit, filter, json),
+        Commands::Export {
+            chat,
+            since,
+            until,
+            limit,
+            format,
+            output,
+        } => export::cmd_export(chat, since, until, limit, format, output),
+        Commands::Unread {
+            limit,
+            filter,
+            json,
+        } => unread::cmd_unread(limit, filter, json),
         Commands::Members { chat, json } => members::cmd_members(chat, json),
         Commands::NewMessages { limit, json } => new_messages::cmd_new_messages(limit, json),
-        Commands::Stats { chat, since, until, json } => {
-            stats::cmd_stats(chat, since, until, json)
-        }
-        Commands::Favorites { limit, fav_type, query, json } => {
-            favorites::cmd_favorites(limit, fav_type, query, json)
-        }
-        Commands::SnsNotifications { limit, since, until, include_read, json } => {
-            sns_notifications::cmd_sns_notifications(limit, since, until, include_read, json)
-        }
-        Commands::SnsFeed { limit, since, until, user, json } => {
-            sns_feed::cmd_sns_feed(limit, since, until, user, json)
-        }
-        Commands::SnsSearch { keyword, limit, since, until, user, json } => {
-            sns_search::cmd_sns_search(keyword, limit, since, until, user, json)
-        }
+        Commands::Stats {
+            chat,
+            since,
+            until,
+            json,
+        } => stats::cmd_stats(chat, since, until, json),
+        Commands::Favorites {
+            limit,
+            fav_type,
+            query,
+            json,
+        } => favorites::cmd_favorites(limit, fav_type, query, json),
+        Commands::SnsNotifications {
+            limit,
+            since,
+            until,
+            include_read,
+            json,
+        } => sns_notifications::cmd_sns_notifications(limit, since, until, include_read, json),
+        Commands::SnsFeed {
+            limit,
+            since,
+            until,
+            user,
+            json,
+        } => sns_feed::cmd_sns_feed(limit, since, until, user, json),
+        Commands::SnsSearch {
+            keyword,
+            limit,
+            since,
+            until,
+            user,
+            json,
+        } => sns_search::cmd_sns_search(keyword, limit, since, until, user, json),
         Commands::Daemon { cmd } => daemon_cmd::cmd_daemon(cmd),
     }
 }

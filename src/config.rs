@@ -11,38 +11,88 @@ pub struct Config {
     pub wechat_process: String,
 }
 
+pub fn normalize_db_dir(path: PathBuf) -> PathBuf {
+    let file_name = path
+        .file_name()
+        .and_then(|s| s.to_str())
+        .unwrap_or_default()
+        .to_ascii_lowercase();
+
+    if file_name == "message" {
+        if let Some(parent) = path.parent() {
+            if parent.join("Session").is_dir()
+                || parent.join("Contact").is_dir()
+                || parent.join("Favorites").is_dir()
+            {
+                return parent.to_path_buf();
+            }
+        }
+    }
+
+    path
+}
+
+pub fn effective_home_dir() -> Option<PathBuf> {
+    if let Ok(sudo_user) = std::env::var("SUDO_USER") {
+        if !sudo_user.is_empty() {
+            #[cfg(target_os = "macos")]
+            {
+                return Some(PathBuf::from("/Users").join(sudo_user));
+            }
+            #[cfg(target_os = "linux")]
+            {
+                return Some(PathBuf::from("/home").join(sudo_user));
+            }
+        }
+    }
+    dirs::home_dir()
+}
+
 /// 从 <exe_dir>/config.json 或 $HOME/.wx-cli/config.json 加载配置
 pub fn load_config() -> Result<Config> {
     let config_path = find_config_file()?;
     let content = std::fs::read_to_string(&config_path)
         .with_context(|| format!("读取 config.json 失败: {}", config_path.display()))?;
-    let raw: serde_json::Value = serde_json::from_str(&content)
-        .with_context(|| "config.json 格式错误")?;
+    let raw: serde_json::Value =
+        serde_json::from_str(&content).with_context(|| "config.json 格式错误")?;
 
-    let db_dir = raw.get("db_dir")
+    let db_dir = raw
+        .get("db_dir")
         .and_then(|v| v.as_str())
         .map(PathBuf::from)
         .unwrap_or_else(default_db_dir);
+    let db_dir = normalize_db_dir(db_dir);
 
     let base_dir = config_path.parent().unwrap_or(Path::new("."));
 
-    let keys_file = raw.get("keys_file")
+    let keys_file = raw
+        .get("keys_file")
         .and_then(|v| v.as_str())
         .map(|s| {
             let p = PathBuf::from(s);
-            if p.is_absolute() { p } else { base_dir.join(p) }
+            if p.is_absolute() {
+                p
+            } else {
+                base_dir.join(p)
+            }
         })
         .unwrap_or_else(|| base_dir.join("all_keys.json"));
 
-    let decrypted_dir = raw.get("decrypted_dir")
+    let decrypted_dir = raw
+        .get("decrypted_dir")
         .and_then(|v| v.as_str())
         .map(|s| {
             let p = PathBuf::from(s);
-            if p.is_absolute() { p } else { base_dir.join(p) }
+            if p.is_absolute() {
+                p
+            } else {
+                base_dir.join(p)
+            }
         })
         .unwrap_or_else(|| base_dir.join("decrypted"));
 
-    let wechat_process = raw.get("wechat_process")
+    let wechat_process = raw
+        .get("wechat_process")
         .and_then(|v| v.as_str())
         .unwrap_or(default_wechat_process())
         .to_string();
@@ -66,12 +116,14 @@ fn find_config_file() -> Result<PathBuf> {
         }
     }
     // 2. 当前工作目录
-    let cwd = std::env::current_dir().unwrap_or_default().join("config.json");
+    let cwd = std::env::current_dir()
+        .unwrap_or_default()
+        .join("config.json");
     if cwd.exists() {
         return Ok(cwd);
     }
     // 3. ~/.wx-cli/config.json
-    if let Some(home) = dirs::home_dir() {
+    if let Some(home) = effective_home_dir() {
         let p = home.join(".wx-cli").join("config.json");
         if p.exists() {
             return Ok(p);
@@ -87,7 +139,7 @@ fn find_config_file() -> Result<PathBuf> {
 }
 
 pub fn cli_dir() -> PathBuf {
-    dirs::home_dir()
+    effective_home_dir()
         .unwrap_or_else(|| PathBuf::from("/tmp"))
         .join(".wx-cli")
 }
@@ -115,20 +167,19 @@ pub fn mtime_file() -> PathBuf {
 fn default_db_dir() -> PathBuf {
     #[cfg(target_os = "macos")]
     {
-        dirs::home_dir()
+        effective_home_dir()
             .unwrap_or_default()
             .join("Library/Containers/com.tencent.xinWeChat/Data/Documents/xwechat_files")
     }
     #[cfg(target_os = "linux")]
     {
-        dirs::home_dir()
+        effective_home_dir()
             .unwrap_or_default()
             .join("Documents/xwechat_files")
     }
     #[cfg(target_os = "windows")]
     {
-        PathBuf::from(std::env::var("APPDATA").unwrap_or_default())
-            .join("Tencent/xwechat")
+        PathBuf::from(std::env::var("APPDATA").unwrap_or_default()).join("Tencent/xwechat")
     }
     #[cfg(not(any(target_os = "macos", target_os = "linux", target_os = "windows")))]
     {
@@ -138,13 +189,21 @@ fn default_db_dir() -> PathBuf {
 
 fn default_wechat_process() -> &'static str {
     #[cfg(target_os = "macos")]
-    { "WeChat" }
+    {
+        "WeChat"
+    }
     #[cfg(target_os = "linux")]
-    { "wechat" }
+    {
+        "wechat"
+    }
     #[cfg(target_os = "windows")]
-    { "Weixin.exe" }
+    {
+        "Weixin.exe"
+    }
     #[cfg(not(any(target_os = "macos", target_os = "linux", target_os = "windows")))]
-    { "WeChat" }
+    {
+        "WeChat"
+    }
 }
 
 /// 自动检测微信 db_storage 目录
@@ -154,24 +213,15 @@ pub fn auto_detect_db_dir() -> Option<PathBuf> {
 
 #[cfg(target_os = "macos")]
 fn detect_db_dir_impl() -> Option<PathBuf> {
-    let home = dirs::home_dir()?;
-    // 支持 sudo 环境
-    let home = if let Ok(sudo_user) = std::env::var("SUDO_USER") {
-        if !sudo_user.is_empty() {
-            PathBuf::from("/Users").join(&sudo_user)
-        } else {
-            home
-        }
-    } else {
-        home
-    };
+    let home = effective_home_dir()?;
 
-    let base = home.join("Library/Containers/com.tencent.xinWeChat/Data/Documents/xwechat_files");
-    if !base.exists() {
-        return None;
-    }
     let mut candidates: Vec<PathBuf> = Vec::new();
-    if let Ok(entries) = std::fs::read_dir(&base) {
+
+    // WeChat 4.x 的标准目录结构：
+    // ~/Library/Containers/.../Data/Documents/xwechat_files/<account>/db_storage
+    let legacy_base =
+        home.join("Library/Containers/com.tencent.xinWeChat/Data/Documents/xwechat_files");
+    if let Ok(entries) = std::fs::read_dir(&legacy_base) {
         for entry in entries.flatten() {
             let storage = entry.path().join("db_storage");
             if storage.is_dir() {
@@ -179,6 +229,29 @@ fn detect_db_dir_impl() -> Option<PathBuf> {
             }
         }
     }
+
+    // 某些 macOS 安装会把数据库落在容器内的 Application Support 下：
+    // ~/Library/Containers/.../Data/Library/Application Support/com.tencent.xinWeChat/<version>/<account>/Message
+    let modern_base = home.join(
+        "Library/Containers/com.tencent.xinWeChat/Data/Library/Application Support/com.tencent.xinWeChat",
+    );
+    if let Ok(version_dirs) = std::fs::read_dir(&modern_base) {
+        for version_dir in version_dirs.flatten() {
+            let version_path = version_dir.path();
+            if !version_path.is_dir() {
+                continue;
+            }
+            if let Ok(account_dirs) = std::fs::read_dir(&version_path) {
+                for account_dir in account_dirs.flatten() {
+                    let account_path = account_dir.path();
+                    if account_path.join("Message").is_dir() {
+                        candidates.push(account_path);
+                    }
+                }
+            }
+        }
+    }
+
     candidates.sort_by_key(|p| {
         std::fs::metadata(p)
             .and_then(|m| m.modified())
@@ -189,8 +262,9 @@ fn detect_db_dir_impl() -> Option<PathBuf> {
 
 #[cfg(target_os = "linux")]
 fn detect_db_dir_impl() -> Option<PathBuf> {
-    let home = dirs::home_dir()?;
-    let sudo_home = std::env::var("SUDO_USER").ok()
+    let home = effective_home_dir()?;
+    let sudo_home = std::env::var("SUDO_USER")
+        .ok()
         .filter(|s| !s.is_empty())
         .map(|u| PathBuf::from("/home").join(u));
 
@@ -235,8 +309,7 @@ fn detect_db_dir_impl() -> Option<PathBuf> {
                 if let Ok(content) = std::fs::read_to_string(&path) {
                     let data_root = content.trim().to_string();
                     if PathBuf::from(&data_root).is_dir() {
-                        let pattern = PathBuf::from(&data_root)
-                            .join("xwechat_files");
+                        let pattern = PathBuf::from(&data_root).join("xwechat_files");
                         if let Ok(entries2) = std::fs::read_dir(&pattern) {
                             for entry2 in entries2.flatten() {
                                 let storage = entry2.path().join("db_storage");

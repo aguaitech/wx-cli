@@ -1,8 +1,8 @@
-use anyhow::Result;
-use crate::ipc::Request;
 use super::history::{parse_time, parse_time_end};
+use super::output::{print_value, resolve};
 use super::transport;
-use super::output::{resolve, print_value};
+use crate::ipc::Request;
+use anyhow::Result;
 
 pub fn cmd_sns_feed(
     limit: usize,
@@ -21,7 +21,9 @@ pub fn cmd_sns_feed(
         user,
     };
     let resp = transport::send(req)?;
-    let data = resp.data.get("posts")
+    let data = resp
+        .data
+        .get("posts")
         .cloned()
         .unwrap_or(serde_json::Value::Array(vec![]));
     print_value(&data, &resolve(json))

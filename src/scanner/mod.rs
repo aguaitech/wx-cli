@@ -2,10 +2,10 @@ use anyhow::Result;
 use serde::{Deserialize, Serialize};
 use std::path::Path;
 
-#[cfg(target_os = "macos")]
-mod macos;
 #[cfg(target_os = "linux")]
 mod linux;
+#[cfg(target_os = "macos")]
+mod macos;
 #[cfg(target_os = "windows")]
 mod windows;
 
@@ -92,7 +92,11 @@ mod tests {
     fn make_temp_dir(label: &str) -> std::path::PathBuf {
         let mut p = std::env::temp_dir();
         // 用 label + thread id 保证同进程内并发测试不冲突
-        p.push(format!("wx-cli-test-{}-{:?}", label, std::thread::current().id()));
+        p.push(format!(
+            "wx-cli-test-{}-{:?}",
+            label,
+            std::thread::current().id()
+        ));
         fs::create_dir_all(&p).unwrap();
         p
     }
@@ -118,8 +122,8 @@ mod tests {
         let path = dir.join("enc.db");
         // 非 SQLite 头 → 视为加密数据库，取前 16 字节作为 salt
         let header: [u8; 16] = [
-            0xde, 0xad, 0xbe, 0xef, 0x01, 0x02, 0x03, 0x04,
-            0x05, 0x06, 0x07, 0x08, 0x09, 0x0a, 0x0b, 0x0c,
+            0xde, 0xad, 0xbe, 0xef, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0a,
+            0x0b, 0x0c,
         ];
         fs::write(&path, &header).unwrap();
 
@@ -214,7 +218,7 @@ mod tests {
     fn test_collect_db_salts_ignores_non_db_extensions() {
         let dir = make_temp_dir("collect-ext");
         let header = [0xbbu8; 16];
-        fs::write(dir.join("data.txt"),  &header).unwrap();
+        fs::write(dir.join("data.txt"), &header).unwrap();
         fs::write(dir.join("data.json"), &header).unwrap();
         fs::write(dir.join("data.sqlite"), &header).unwrap();
 

@@ -1,6 +1,6 @@
-use std::collections::HashMap;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use std::collections::HashMap;
 
 /// CLI 向 daemon 发送的请求（换行符分隔 JSON，与 Python 版兼容）
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -116,7 +116,6 @@ pub enum Request {
     },
 }
 
-
 /// daemon 的响应
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Response {
@@ -129,11 +128,19 @@ pub struct Response {
 
 impl Response {
     pub fn ok(data: Value) -> Self {
-        Self { ok: true, error: None, data }
+        Self {
+            ok: true,
+            error: None,
+            data,
+        }
     }
 
     pub fn err(msg: impl Into<String>) -> Self {
-        Self { ok: false, error: Some(msg.into()), data: Value::Null }
+        Self {
+            ok: false,
+            error: Some(msg.into()),
+            data: Value::Null,
+        }
     }
 
     pub fn to_json_line(&self) -> anyhow::Result<String> {
@@ -142,6 +149,12 @@ impl Response {
     }
 }
 
-fn default_limit_20() -> usize { 20 }
-fn default_limit_50() -> usize { 50 }
-fn default_limit_200() -> usize { 200 }
+fn default_limit_20() -> usize {
+    20
+}
+fn default_limit_50() -> usize {
+    50
+}
+fn default_limit_200() -> usize {
+    200
+}

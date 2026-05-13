@@ -8,16 +8,14 @@
 use anyhow::{bail, Context, Result};
 use std::path::Path;
 use windows::Win32::Foundation::{CloseHandle, HANDLE};
+use windows::Win32::System::Diagnostics::Debug::ReadProcessMemory;
 use windows::Win32::System::Diagnostics::ToolHelp::{
     CreateToolhelp32Snapshot, Process32First, Process32Next, PROCESSENTRY32, TH32CS_SNAPPROCESS,
 };
 use windows::Win32::System::Memory::{
     VirtualQueryEx, MEMORY_BASIC_INFORMATION, MEM_COMMIT, PAGE_READWRITE,
 };
-use windows::Win32::System::Threading::{
-    OpenProcess, PROCESS_QUERY_INFORMATION, PROCESS_VM_READ,
-};
-use windows::Win32::System::Diagnostics::Debug::ReadProcessMemory;
+use windows::Win32::System::Threading::{OpenProcess, PROCESS_QUERY_INFORMATION, PROCESS_VM_READ};
 
 use super::{collect_db_salts, KeyEntry};
 
@@ -27,9 +25,7 @@ const CHUNK_SIZE: usize = 2 * 1024 * 1024;
 /// 查找 Weixin.exe 进程 PID
 fn find_wechat_pid() -> Option<u32> {
     // SAFETY: CreateToolhelp32Snapshot 标准 Windows API
-    let snap = unsafe {
-        CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0).ok()?
-    };
+    let snap = unsafe { CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0).ok()? };
 
     let mut entry = PROCESSENTRY32 {
         dwSize: std::mem::size_of::<PROCESSENTRY32>() as u32,
@@ -43,8 +39,8 @@ fn find_wechat_pid() -> Option<u32> {
             return None;
         }
         loop {
-            let name = std::ffi::CStr::from_ptr(entry.szExeFile.as_ptr() as *const i8)
-                .to_string_lossy();
+            let name =
+                std::ffi::CStr::from_ptr(entry.szExeFile.as_ptr() as *const i8).to_string_lossy();
             if name.eq_ignore_ascii_case("Weixin.exe") {
                 let pid = entry.th32ProcessID;
                 let _ = CloseHandle(snap);
@@ -60,8 +56,7 @@ fn find_wechat_pid() -> Option<u32> {
 }
 
 pub fn scan_keys(db_dir: &Path) -> Result<Vec<KeyEntry>> {
-    let pid = find_wechat_pid()
-        .context("找不到 Weixin.exe 进程，请确认微信正在运行")?;
+    let pid = find_wechat_pid().context("找不到 Weixin.exe 进程，请确认微信正在运行")?;
     eprintln!("WeChat PID: {}", pid);
 
     // SAFETY: OpenProcess 请求读取权限
@@ -78,7 +73,9 @@ pub fn scan_keys(db_dir: &Path) -> Result<Vec<KeyEntry>> {
     eprintln!("找到 {} 个候选密钥", raw_keys.len());
 
     // SAFETY: 关闭进程句柄
-    unsafe { let _ = CloseHandle(process); }
+    unsafe {
+        let _ = CloseHandle(process);
+    }
 
     let mut entries = Vec::new();
     for (key_hex, salt_hex) in &raw_keys {
@@ -133,12 +130,7 @@ fn scan_memory(process: HANDLE) -> Result<Vec<(String, String)>> {
     Ok(results)
 }
 
-fn scan_region(
-    process: HANDLE,
-    base: usize,
-    size: usize,
-    results: &mut Vec<(String, String)>,
-) {
+fn scan_region(process: HANDLE, base: usize, size: usize, results: &mut Vec<(String, String)>) {
     let overlap = HEX_PATTERN_LEN + 3;
     let mut offset = 0usize;
 
@@ -159,7 +151,8 @@ fn scan_region(
                 buf.as_mut_ptr() as *mut _,
                 chunk_size,
                 Some(&mut bytes_read),
-            ).is_ok()
+            )
+            .is_ok()
         };
 
         if ok && bytes_read > 0 {
@@ -203,10 +196,8 @@ fn search_pattern(buf: &[u8], results: &mut Vec<(String, String)>) {
             i += 1;
             continue;
         }
-        let key_hex = String::from_utf8_lossy(&buf[hex_start..hex_start + 64])
-            .to_lowercase();
-        let salt_hex = String::from_utf8_lossy(&buf[hex_start + 64..hex_start + 96])
-            .to_lowercase();
+        let key_hex = String::from_utf8_lossy(&buf[hex_start..hex_start + 64]).to_lowercase();
+        let salt_hex = String::from_utf8_lossy(&buf[hex_start + 64..hex_start + 96]).to_lowercase();
         let is_dup = results.iter().any(|(k, s)| k == &key_hex && s == &salt_hex);
         if !is_dup {
             results.push((key_hex, salt_hex));

@@ -1,6 +1,7 @@
 use anyhow::{Context, Result};
 use serde_json::json;
 use std::collections::HashMap;
+use std::path::{Path, PathBuf};
 
 use crate::config;
 use crate::scanner;
@@ -8,21 +9,33 @@ use crate::scanner;
 pub fn cmd_init(force: bool) -> Result<()> {
     // 查找 config.json
     let config_path = find_or_create_config_path();
+    let mut configured_db_dir: Option<PathBuf> = None;
 
     // 检查是否已初始化
-    if !force && config_path.exists() {
+    if config_path.exists() {
         if let Ok(content) = std::fs::read_to_string(&config_path) {
             if let Ok(cfg) = serde_json::from_str::<serde_json::Value>(&content) {
                 let db_dir = cfg.get("db_dir").and_then(|v| v.as_str()).unwrap_or("");
-                let keys_file = cfg.get("keys_file").and_then(|v| v.as_str()).unwrap_or("all_keys.json");
+                let keys_file = cfg
+                    .get("keys_file")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("all_keys.json");
                 let keys_path = if std::path::Path::new(keys_file).is_absolute() {
                     std::path::PathBuf::from(keys_file)
                 } else {
-                    config_path.parent().unwrap_or(std::path::Path::new("."))
+                    config_path
+                        .parent()
+                        .unwrap_or(Path::new("."))
                         .join(keys_file)
                 };
-                if !db_dir.is_empty() && !db_dir.contains("your_wxid")
-                    && std::path::Path::new(db_dir).exists()
+                if !db_dir.is_empty() && !db_dir.contains("your_wxid") && Path::new(db_dir).exists()
+                {
+                    configured_db_dir = Some(config::normalize_db_dir(PathBuf::from(db_dir)));
+                }
+                if !force
+                    && !db_dir.is_empty()
+                    && !db_dir.contains("your_wxid")
+                    && Path::new(db_dir).exists()
                     && keys_path.exists()
                 {
                     println!("已初始化，数据目录: {}", db_dir);
@@ -35,8 +48,14 @@ pub fn cmd_init(force: bool) -> Result<()> {
 
     // Step 1: 检测 db_dir
     println!("检测微信数据目录...");
-    let db_dir = config::auto_detect_db_dir()
-        .context("未能自动检测到微信数据目录\n请手动编辑 config.json 中的 db_dir 字段")?;
+    let db_dir = if let Some(db_dir) = configured_db_dir {
+        println!("使用 config.json 中的 db_dir: {}", db_dir.display());
+        db_dir
+    } else {
+        config::auto_detect_db_dir()
+            .map(config::normalize_db_dir)
+            .context("未能自动检测到微信数据目录\n请手动编辑 config.json 中的 db_dir 字段")?
+    };
     println!("找到数据目录: {}", db_dir.display());
 
     // Step 2: 扫描密钥（需要 root/sudo）
@@ -57,15 +76,19 @@ pub fn cmd_init(force: bool) -> Result<()> {
     }
 
     // Step 3: 保存 all_keys.json
-    let keys_file_path = config_path.parent()
+    let keys_file_path = config_path
+        .parent()
         .unwrap_or(std::path::Path::new("."))
         .join("all_keys.json");
 
     let mut keys_json = serde_json::Map::new();
     for entry in &entries {
-        keys_json.insert(entry.db_name.clone(), json!({
-            "enc_key": entry.enc_key,
-        }));
+        keys_json.insert(
+            entry.db_name.clone(),
+            json!({
+                "enc_key": entry.enc_key,
+            }),
+        );
     }
     std::fs::write(&keys_file_path, serde_json::to_string_pretty(&keys_json)?)
         .context("写入 all_keys.json 失败")?;
@@ -85,8 +108,10 @@ pub fn cmd_init(force: bool) -> Result<()> {
         }
     }
     cfg.insert("db_dir".into(), json!(db_dir.to_string_lossy()));
-    cfg.entry("keys_file".into()).or_insert_with(|| json!("all_keys.json"));
-    cfg.entry("decrypted_dir".into()).or_insert_with(|| json!("decrypted"));
+    cfg.entry("keys_file".into())
+        .or_insert_with(|| json!("all_keys.json"));
+    cfg.entry("decrypted_dir".into())
+        .or_insert_with(|| json!("decrypted"));
 
     std::fs::write(&config_path, serde_json::to_string_pretty(&cfg)?)
         .context("写入 config.json 失败")?;
@@ -129,7 +154,9 @@ fn drop_privileges_if_sudo() -> Result<()> {
     }
 
     // 设置 umask，让后续 create 出来的文件/目录默认是 0600 / 0700。
-    unsafe { libc::umask(0o077); }
+    unsafe {
+        libc::umask(0o077);
+    }
 
     // 必须先 setgid 再 setuid：一旦 uid 降下来就没法再改 gid 了。
     unsafe {
@@ -153,8 +180,9 @@ fn drop_privileges_if_sudo() -> Result<()> {
         Ok(())
     }
     fn chown_one(path: &Path, uid: u32, gid: u32) -> std::io::Result<()> {
-        let c = CString::new(path.as_os_str().as_bytes())
-            .map_err(|_| std::io::Error::new(std::io::ErrorKind::InvalidInput, "path contains NUL"))?;
+        let c = CString::new(path.as_os_str().as_bytes()).map_err(|_| {
+            std::io::Error::new(std::io::ErrorKind::InvalidInput, "path contains NUL")
+        })?;
         if unsafe { libc::chown(c.as_ptr(), uid, gid) } != 0 {
             return Err(std::io::Error::last_os_error());
         }

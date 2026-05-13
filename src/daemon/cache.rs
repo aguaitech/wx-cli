@@ -1,6 +1,8 @@
 use anyhow::{Context, Result};
+use rusqlite::Connection;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use tokio::sync::Mutex;
@@ -35,10 +37,7 @@ pub struct DbCache {
 }
 
 impl DbCache {
-    pub async fn new(
-        db_dir: PathBuf,
-        all_keys: HashMap<String, String>,
-    ) -> Result<Self> {
+    pub async fn new(db_dir: PathBuf, all_keys: HashMap<String, String>) -> Result<Self> {
         let cache_dir = config::cache_dir();
         tokio::fs::create_dir_all(&cache_dir).await?;
 
@@ -57,6 +56,72 @@ impl DbCache {
     fn cache_file_path(&self, rel_key: &str) -> PathBuf {
         let hash = format!("{:x}", md5::compute(rel_key.as_bytes()));
         self.cache_dir.join(format!("{}.db", hash))
+    }
+
+    fn find_case_insensitive(&self, target: &str) -> Option<String> {
+        let target = target.to_ascii_lowercase();
+        self.all_keys
+            .keys()
+            .find(|k| k.to_ascii_lowercase() == target)
+            .cloned()
+    }
+
+    fn find_with_predicate<F>(&self, pred: F) -> Option<String>
+    where
+        F: Fn(&str) -> bool,
+    {
+        self.all_keys.keys().find(|k| pred(k)).cloned()
+    }
+
+    fn resolve_rel_key(&self, rel_key: &str) -> Option<String> {
+        let requested = rel_key.replace('\\', "/");
+        if self.all_keys.contains_key(&requested) {
+            return Some(requested);
+        }
+
+        let lower = requested.to_ascii_lowercase();
+        let alias = match lower.as_str() {
+            "session/session.db" => self
+                .find_case_insensitive("Session/session_new.db")
+                .or_else(|| self.find_case_insensitive("Session/session.db"))
+                .or_else(|| {
+                    self.find_with_predicate(|k| {
+                        let k = k.to_ascii_lowercase();
+                        k.starts_with("session/") && k.ends_with(".db")
+                    })
+                }),
+            "contact/contact.db" => self
+                .find_case_insensitive("Contact/wccontact_new2.db")
+                .or_else(|| self.find_case_insensitive("Contact/wccontact_new.db"))
+                .or_else(|| self.find_case_insensitive("Contact/contact.db"))
+                .or_else(|| {
+                    self.find_with_predicate(|k| {
+                        let k = k.to_ascii_lowercase();
+                        k.starts_with("contact/") && k.contains("wccontact") && k.ends_with(".db")
+                    })
+                }),
+            "favorite/favorite.db" => self
+                .find_case_insensitive("Favorites/favorites.db")
+                .or_else(|| self.find_case_insensitive("Favorite/favorite.db"))
+                .or_else(|| {
+                    self.find_with_predicate(|k| {
+                        let k = k.to_ascii_lowercase();
+                        k.ends_with("/favorites.db") || k.ends_with("/favorite.db")
+                    })
+                }),
+            "sns/sns.db" => self
+                .find_case_insensitive("Sns/sns.db")
+                .or_else(|| self.find_case_insensitive("sns/sns.db"))
+                .or_else(|| {
+                    self.find_with_predicate(|k| {
+                        let k = k.to_ascii_lowercase();
+                        k.ends_with("/sns.db")
+                    })
+                }),
+            _ => None,
+        };
+
+        alias
     }
 
     /// 从持久化文件加载 mtime 记录，复用未过期的解密文件
@@ -78,18 +143,32 @@ impl DbCache {
             if !dec_path.exists() {
                 continue;
             }
-            let db_path = self.db_dir.join(rel_key.replace('\\', std::path::MAIN_SEPARATOR_STR).replace('/', std::path::MAIN_SEPARATOR_STR));
+            if !looks_like_sqlite(&dec_path) {
+                continue;
+            }
+            let db_path = self.db_dir.join(
+                rel_key
+                    .replace('\\', std::path::MAIN_SEPARATOR_STR)
+                    .replace('/', std::path::MAIN_SEPARATOR_STR),
+            );
             let wal_path = wal_path_for(&db_path);
 
             let db_mt = mtime_nanos(&db_path);
-            let wal_mt = if wal_path.exists() { mtime_nanos(&wal_path) } else { 0 };
+            let wal_mt = if wal_path.exists() {
+                mtime_nanos(&wal_path)
+            } else {
+                0
+            };
 
             if db_mt == entry.db_mt && wal_mt == entry.wal_mt {
-                inner.insert(rel_key.clone(), CacheEntry {
-                    db_mtime: db_mt,
-                    wal_mtime: wal_mt,
-                    decrypted_path: dec_path,
-                });
+                inner.insert(
+                    rel_key.clone(),
+                    CacheEntry {
+                        db_mtime: db_mt,
+                        wal_mtime: wal_mt,
+                        decrypted_path: dec_path,
+                    },
+                );
                 reused += 1;
             }
         }
@@ -102,13 +181,19 @@ impl DbCache {
     async fn save_persistent(&self) {
         let mtime_file = config::mtime_file();
         let inner = self.inner.lock().await;
-        let data: HashMap<String, MtimeEntry> = inner.iter().map(|(k, v)| {
-            (k.clone(), MtimeEntry {
-                db_mt: v.db_mtime,
-                wal_mt: v.wal_mtime,
-                path: v.decrypted_path.to_string_lossy().into_owned(),
+        let data: HashMap<String, MtimeEntry> = inner
+            .iter()
+            .map(|(k, v)| {
+                (
+                    k.clone(),
+                    MtimeEntry {
+                        db_mt: v.db_mtime,
+                        wal_mt: v.wal_mtime,
+                        path: v.decrypted_path.to_string_lossy().into_owned(),
+                    },
+                )
             })
-        }).collect();
+            .collect();
         drop(inner);
 
         if let Ok(json) = serde_json::to_string_pretty(&data) {
@@ -120,14 +205,20 @@ impl DbCache {
     ///
     /// 如果 mtime 未变，直接返回缓存路径；否则重新解密
     pub async fn get(&self, rel_key: &str) -> Result<Option<PathBuf>> {
-        let enc_key_hex = match self.all_keys.get(rel_key) {
+        let resolved = match self.resolve_rel_key(rel_key) {
+            Some(k) => k,
+            None => return Ok(None),
+        };
+
+        let enc_key_hex = match self.all_keys.get(&resolved) {
             Some(k) => k.clone(),
             None => return Ok(None),
         };
 
         let db_path = self.db_dir.join(
-            rel_key.replace('\\', std::path::MAIN_SEPARATOR_STR)
-                   .replace('/', std::path::MAIN_SEPARATOR_STR)
+            resolved
+                .replace('\\', std::path::MAIN_SEPARATOR_STR)
+                .replace('/', std::path::MAIN_SEPARATOR_STR),
         );
         if !db_path.exists() {
             return Ok(None);
@@ -136,12 +227,16 @@ impl DbCache {
         let wal_path = wal_path_for(&db_path);
 
         let db_mt = mtime_nanos(&db_path);
-        let wal_mt = if wal_path.exists() { mtime_nanos(&wal_path) } else { 0 };
+        let wal_mt = if wal_path.exists() {
+            mtime_nanos(&wal_path)
+        } else {
+            0
+        };
 
         // 检查缓存
         {
             let inner = self.inner.lock().await;
-            if let Some(entry) = inner.get(rel_key) {
+            if let Some(entry) = inner.get(&resolved) {
                 if entry.db_mtime == db_mt
                     && entry.wal_mtime == wal_mt
                     && entry.decrypted_path.exists()
@@ -152,39 +247,72 @@ impl DbCache {
         }
 
         // 需要重新解密
-        let out_path = self.cache_file_path(rel_key);
-        let enc_key_bytes = hex_to_32bytes(&enc_key_hex)
-            .with_context(|| format!("密钥格式错误: {}", rel_key))?;
+        let out_path = self.cache_file_path(&resolved);
+        let raw_key_bytes =
+            hex_to_32bytes(&enc_key_hex).with_context(|| format!("密钥格式错误: {}", resolved))?;
+        let (params, enc_key_bytes) = crypto::detect_params_and_key(&db_path, &raw_key_bytes)
+            .with_context(|| format!("识别数据库参数失败: {}", resolved))?;
+        let db_salt =
+            read_db_salt(&db_path).with_context(|| format!("读取数据库 salt 失败: {}", resolved))?;
 
         let t0 = std::time::Instant::now();
         let db_path2 = db_path.clone();
         let out_path2 = out_path.clone();
         let key_copy = enc_key_bytes;
+        let params_copy = params;
         tokio::task::spawn_blocking(move || {
-            crypto::full_decrypt(&db_path2, &out_path2, &key_copy)
-        }).await??;
+            crypto::full_decrypt(&db_path2, &out_path2, &key_copy, params_copy)
+        })
+        .await??;
 
         // 应用 WAL
         if wal_path.exists() {
             let out_path3 = out_path.clone();
             let wal_path3 = wal_path.clone();
+            let db_salt3 = db_salt;
             let key_copy2 = enc_key_bytes;
+            let params_copy2 = params;
             tokio::task::spawn_blocking(move || {
-                wal::apply_wal(&wal_path3, &out_path3, &key_copy2)
-            }).await??;
+                wal::apply_wal(&wal_path3, &out_path3, &db_salt3, &key_copy2, params_copy2)
+            })
+            .await??;
+            if !sqlite_opens(&out_path) {
+                let is_message_shard = resolved
+                    .to_ascii_lowercase()
+                    .starts_with("message/msg_");
+                if is_message_shard {
+                    eprintln!(
+                        "[cache] WAL 合并后校验失败，保留消息分片并交给 recover 读取: {}",
+                        resolved
+                    );
+                } else {
+                    eprintln!("[cache] WAL 合并后校验失败，回退到基础解密: {}", resolved);
+                    let db_path4 = db_path.clone();
+                    let out_path4 = out_path.clone();
+                    let key_copy3 = enc_key_bytes;
+                    let params_copy3 = params;
+                    tokio::task::spawn_blocking(move || {
+                        crypto::full_decrypt(&db_path4, &out_path4, &key_copy3, params_copy3)
+                    })
+                    .await??;
+                }
+            }
         }
 
         let elapsed_ms = t0.elapsed().as_millis();
-        eprintln!("[cache] 解密 {} ({}ms)", rel_key, elapsed_ms);
+        eprintln!("[cache] 解密 {} ({}ms)", resolved, elapsed_ms);
 
         // 更新内存缓存
         {
             let mut inner = self.inner.lock().await;
-            inner.insert(rel_key.to_string(), CacheEntry {
-                db_mtime: db_mt,
-                wal_mtime: wal_mt,
-                decrypted_path: out_path.clone(),
-            });
+            inner.insert(
+                resolved,
+                CacheEntry {
+                    db_mtime: db_mt,
+                    wal_mtime: wal_mt,
+                    decrypted_path: out_path.clone(),
+                },
+            );
         }
 
         self.save_persistent().await;
@@ -195,7 +323,11 @@ impl DbCache {
 pub(super) fn mtime_nanos(path: &Path) -> u64 {
     std::fs::metadata(path)
         .and_then(|m| m.modified())
-        .map(|t| t.duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_nanos() as u64)
+        .map(|t| {
+            t.duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_nanos() as u64
+        })
         .unwrap_or(0)
 }
 
@@ -216,4 +348,31 @@ fn hex_to_32bytes(s: &str) -> Result<[u8; 32]> {
             .with_context(|| format!("非法 hex 字符 at {}", i * 2))?;
     }
     Ok(out)
+}
+
+fn looks_like_sqlite(path: &Path) -> bool {
+    let Ok(mut f) = std::fs::File::open(path) else {
+        return false;
+    };
+    let mut buf = [0u8; 16];
+    use std::io::Read;
+    if f.read_exact(&mut buf).is_err() {
+        return false;
+    }
+    buf == *crypto::SQLITE_HDR
+}
+
+fn sqlite_opens(path: &Path) -> bool {
+    let Ok(conn) = Connection::open(path) else {
+        return false;
+    };
+    conn.query_row("PRAGMA schema_version", [], |row| row.get::<_, i64>(0))
+        .is_ok()
+}
+
+fn read_db_salt(path: &Path) -> Result<[u8; 16]> {
+    let mut f = std::fs::File::open(path)?;
+    let mut buf = [0u8; 16];
+    f.read_exact(&mut buf)?;
+    Ok(buf)
 }

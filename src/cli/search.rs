@@ -1,8 +1,8 @@
-use anyhow::Result;
-use crate::ipc::Request;
+use super::history::{parse_msg_type, parse_time, parse_time_end};
+use super::output::{print_value, resolve};
 use super::transport;
-use super::history::{parse_time, parse_time_end, parse_msg_type};
-use super::output::{resolve, print_value};
+use crate::ipc::Request;
+use anyhow::Result;
 
 pub fn cmd_search(
     keyword: String,
@@ -28,7 +28,9 @@ pub fn cmd_search(
     };
 
     let resp = transport::send(req)?;
-    let results = resp.data.get("results")
+    let results = resp
+        .data
+        .get("results")
         .cloned()
         .unwrap_or(serde_json::Value::Array(vec![]));
     print_value(&results, &resolve(json))

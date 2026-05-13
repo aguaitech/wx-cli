@@ -6,7 +6,11 @@ pub enum Fmt {
 
 /// 默认 YAML，--json 时输出 JSON
 pub fn resolve(json: bool) -> Fmt {
-    if json { Fmt::Json } else { Fmt::Yaml }
+    if json {
+        Fmt::Json
+    } else {
+        Fmt::Yaml
+    }
 }
 
 pub fn print_value(value: &serde_json::Value, fmt: &Fmt) -> anyhow::Result<()> {

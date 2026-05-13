@@ -99,8 +99,7 @@ fn is_hex_char(c: u8) -> bool {
 
 pub fn scan_keys(db_dir: &Path) -> Result<Vec<KeyEntry>> {
     // 1. 查找 WeChat PID
-    let pid = find_wechat_pid()
-        .context("找不到 WeChat 进程，请确认 WeChat 正在运行")?;
+    let pid = find_wechat_pid().context("找不到 WeChat 进程，请确认 WeChat 正在运行")?;
     eprintln!("WeChat PID: {}", pid);
 
     // 2. 获取 task port
@@ -171,8 +170,14 @@ fn scan_memory(task: mach_port_t) -> Result<Vec<(String, String)>> {
     loop {
         let mut size: mach_vm_size_t = 0;
         let mut info = VmRegionBasicInfo64 {
-            protection: 0, max_protection: 0, inheritance: 0,
-            shared: 0, reserved: 0, _offset: 0, behavior: 0, user_wired_count: 0,
+            protection: 0,
+            max_protection: 0,
+            inheritance: 0,
+            shared: 0,
+            reserved: 0,
+            _offset: 0,
+            behavior: 0,
+            user_wired_count: 0,
         };
         let mut info_count: mach_msg_type_number_t = info_count_expected;
         let mut obj_name: mach_port_t = 0;
@@ -228,15 +233,11 @@ fn scan_region(
         // SAFETY: mach_vm_read 读取目标进程内存到内核缓冲区，
         // 返回的 data 指针指向通过 vm_allocate 分配的内存，
         // 必须用 mach_vm_deallocate 释放
-        let kr = unsafe {
-            mach_vm_read(task, ca, cs, &mut data, &mut dc)
-        };
+        let kr = unsafe { mach_vm_read(task, ca, cs, &mut data, &mut dc) };
 
         if kr == KERN_SUCCESS {
             // SAFETY: data 是 mach_vm_read 返回的有效指针，dc 是字节数
-            let buf: &[u8] = unsafe {
-                std::slice::from_raw_parts(data as *const u8, dc as usize)
-            };
+            let buf: &[u8] = unsafe { std::slice::from_raw_parts(data as *const u8, dc as usize) };
 
             search_pattern(buf, results);
 
@@ -290,10 +291,8 @@ pub(crate) fn search_pattern(buf: &[u8], results: &mut Vec<(String, String)>) {
         }
 
         // 提取 key_hex 和 salt_hex，统一转小写
-        let key_hex = String::from_utf8_lossy(&buf[hex_start..hex_start + 64])
-            .to_lowercase();
-        let salt_hex = String::from_utf8_lossy(&buf[hex_start + 64..hex_start + 96])
-            .to_lowercase();
+        let key_hex = String::from_utf8_lossy(&buf[hex_start..hex_start + 64]).to_lowercase();
+        let salt_hex = String::from_utf8_lossy(&buf[hex_start + 64..hex_start + 96]).to_lowercase();
 
         // 去重检查
         let is_dup = results.iter().any(|(k, s)| k == &key_hex && s == &salt_hex);
@@ -320,9 +319,15 @@ mod tests {
 
     #[test]
     fn test_is_hex_char_valid() {
-        for c in b'0'..=b'9' { assert!(is_hex_char(c), "digit {}", c as char); }
-        for c in b'a'..=b'f' { assert!(is_hex_char(c), "lower {}", c as char); }
-        for c in b'A'..=b'F' { assert!(is_hex_char(c), "upper {}", c as char); }
+        for c in b'0'..=b'9' {
+            assert!(is_hex_char(c), "digit {}", c as char);
+        }
+        for c in b'a'..=b'f' {
+            assert!(is_hex_char(c), "lower {}", c as char);
+        }
+        for c in b'A'..=b'F' {
+            assert!(is_hex_char(c), "upper {}", c as char);
+        }
     }
 
     #[test]
@@ -334,7 +339,7 @@ mod tests {
 
     #[test]
     fn test_search_pattern_basic() {
-        let key  = [b'a'; 64];
+        let key = [b'a'; 64];
         let salt = [b'b'; 32];
         let buf = make_pattern(&key, &salt);
         let mut results = Vec::new();
@@ -347,7 +352,7 @@ mod tests {
     #[test]
     fn test_search_pattern_uppercase_lowercased() {
         // 大写十六进制字符应被统一转为小写
-        let key  = [b'A'; 64];
+        let key = [b'A'; 64];
         let salt = [b'B'; 32];
         let buf = make_pattern(&key, &salt);
         let mut results = Vec::new();
@@ -383,7 +388,7 @@ mod tests {
     #[test]
     fn test_search_pattern_dedup() {
         // 相同模式出现两次 → 只保留一条
-        let key  = [b'1'; 64];
+        let key = [b'1'; 64];
         let salt = [b'2'; 32];
         let pattern = make_pattern(&key, &salt);
         let mut buf = pattern.clone();
@@ -396,8 +401,10 @@ mod tests {
     #[test]
     fn test_search_pattern_multiple_distinct() {
         // 两个不同的合法模式 → 各自独立捕获
-        let key1  = [b'a'; 64]; let salt1 = [b'b'; 32];
-        let key2  = [b'c'; 64]; let salt2 = [b'd'; 32];
+        let key1 = [b'a'; 64];
+        let salt1 = [b'b'; 32];
+        let key2 = [b'c'; 64];
+        let salt2 = [b'd'; 32];
         let mut buf = make_pattern(&key1, &salt1);
         buf.extend_from_slice(&make_pattern(&key2, &salt2));
         let mut results = Vec::new();
@@ -412,7 +419,7 @@ mod tests {
     fn test_search_pattern_embedded_in_garbage() {
         // 模式夹在垃圾字节中间，仍应找到
         let mut buf = vec![0xFFu8; 50];
-        let key  = [b'e'; 64];
+        let key = [b'e'; 64];
         let salt = [b'f'; 32];
         buf.extend_from_slice(&make_pattern(&key, &salt));
         buf.extend_from_slice(&[0x00u8; 50]);
@@ -441,8 +448,13 @@ mod tests {
     fn test_search_pattern_real_hex_mix() {
         // 合法的混合大小写十六进制（0-9, a-f, A-F）
         let mut key = [b'0'; 64];
-        for (i, c) in b"0123456789abcdefABCDEF0123456789abcdef0123456789abcdef01234567".iter().enumerate() {
-            if i < 64 { key[i] = *c; }
+        for (i, c) in b"0123456789abcdefABCDEF0123456789abcdef0123456789abcdef01234567"
+            .iter()
+            .enumerate()
+        {
+            if i < 64 {
+                key[i] = *c;
+            }
         }
         let salt = [b'9'; 32];
         let buf = make_pattern(&key, &salt);
@@ -450,6 +462,9 @@ mod tests {
         search_pattern(&buf, &mut results);
         assert_eq!(results.len(), 1);
         // 结果应全小写
-        assert!(results[0].0.chars().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit()));
+        assert!(results[0]
+            .0
+            .chars()
+            .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit()));
     }
 }

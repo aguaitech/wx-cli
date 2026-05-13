@@ -39,7 +39,8 @@ async fn async_run() -> Result<()> {
     eprintln!("[daemon] DB_DIR: {}", cfg.db_dir.display());
 
     // 加载密钥
-    let keys_content = tokio::fs::read_to_string(&cfg.keys_file).await
+    let keys_content = tokio::fs::read_to_string(&cfg.keys_file)
+        .await
         .map_err(|e| anyhow::anyhow!("读取密钥文件 {:?} 失败: {}", cfg.keys_file, e))?;
     let keys_raw: serde_json::Value = serde_json::from_str(&keys_content)?;
     let all_keys = extract_keys(&keys_raw);
@@ -49,11 +50,14 @@ async fn async_run() -> Result<()> {
     let db = Arc::new(cache::DbCache::new(cfg.db_dir.clone(), all_keys.clone()).await?);
 
     // 收集消息 DB 列表
-    let msg_db_keys: Vec<String> = all_keys.keys()
+    let msg_db_keys: Vec<String> = all_keys
+        .keys()
         .filter(|k| {
-            let k = k.replace('\\', "/");
-            k.contains("message/message_") && k.ends_with(".db")
-                && !k.contains("_fts") && !k.contains("_resource")
+            let k = k.replace('\\', "/").to_ascii_lowercase();
+            k.contains("message/msg_")
+                && k.ends_with(".db")
+                && !k.contains("_fts")
+                && !k.contains("_resource")
         })
         .cloned()
         .collect();
@@ -96,7 +100,9 @@ fn extract_keys(json: &serde_json::Value) -> HashMap<String, String> {
     let mut result = HashMap::new();
     if let Some(obj) = json.as_object() {
         for (k, v) in obj {
-            if k.starts_with('_') { continue; }
+            if k.starts_with('_') {
+                continue;
+            }
             let enc_key = if let Some(s) = v.as_str() {
                 s.to_string()
             } else if let Some(obj2) = v.as_object() {

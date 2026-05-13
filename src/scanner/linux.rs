@@ -38,8 +38,8 @@ fn find_wechat_pid() -> Option<u32> {
 /// 解析 /proc/<pid>/maps 文件，返回可读的内存区域 (start, end)
 fn parse_maps(pid: u32) -> Result<Vec<(u64, u64)>> {
     let maps_path = format!("/proc/{}/maps", pid);
-    let content = std::fs::read_to_string(&maps_path)
-        .with_context(|| format!("读取 {} 失败", maps_path))?;
+    let content =
+        std::fs::read_to_string(&maps_path).with_context(|| format!("读取 {} 失败", maps_path))?;
 
     let mut regions = Vec::new();
     for line in content.lines() {
@@ -68,8 +68,7 @@ fn parse_maps(pid: u32) -> Result<Vec<(u64, u64)>> {
 }
 
 pub fn scan_keys(db_dir: &Path) -> Result<Vec<KeyEntry>> {
-    let pid = find_wechat_pid()
-        .context("找不到 WeChat 进程，请确认 WeChat 正在运行")?;
+    let pid = find_wechat_pid().context("找不到 WeChat 进程，请确认 WeChat 正在运行")?;
     eprintln!("WeChat PID: {}", pid);
 
     let db_salts = collect_db_salts(db_dir);
@@ -107,12 +106,7 @@ pub fn scan_keys(db_dir: &Path) -> Result<Vec<KeyEntry>> {
     Ok(entries)
 }
 
-fn scan_region(
-    mem: &mut std::fs::File,
-    start: u64,
-    end: u64,
-    results: &mut Vec<(String, String)>,
-) {
+fn scan_region(mem: &mut std::fs::File, start: u64, end: u64, results: &mut Vec<(String, String)>) {
     let total_len = (end - start) as usize;
     let overlap = HEX_PATTERN_LEN + 3;
     let mut offset = 0usize;
@@ -172,10 +166,8 @@ fn search_pattern(buf: &[u8], results: &mut Vec<(String, String)>) {
             i += 1;
             continue;
         }
-        let key_hex = String::from_utf8_lossy(&buf[hex_start..hex_start + 64])
-            .to_lowercase();
-        let salt_hex = String::from_utf8_lossy(&buf[hex_start + 64..hex_start + 96])
-            .to_lowercase();
+        let key_hex = String::from_utf8_lossy(&buf[hex_start..hex_start + 64]).to_lowercase();
+        let salt_hex = String::from_utf8_lossy(&buf[hex_start + 64..hex_start + 96]).to_lowercase();
         let is_dup = results.iter().any(|(k, s)| k == &key_hex && s == &salt_hex);
         if !is_dup {
             results.push((key_hex, salt_hex));

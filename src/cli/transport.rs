@@ -113,7 +113,8 @@ fn start_daemon() -> Result<()> {
             let _ = std::fs::create_dir_all(parent);
         }
         let (stdout_stdio, stderr_stdio) = std::fs::OpenOptions::new()
-            .create(true).append(true)
+            .create(true)
+            .append(true)
             .open(&log_path)
             .and_then(|f| f.try_clone().map(|g| (f, g)))
             .map(|(f, g)| (std::process::Stdio::from(f), std::process::Stdio::from(g)))
@@ -124,7 +125,12 @@ fn start_daemon() -> Result<()> {
             .stdout(stdout_stdio)
             .stderr(stderr_stdio);
         // SAFETY: setsid() 在 fork 后的子进程中调用，使 daemon 脱离控制终端
-        unsafe { cmd.pre_exec(|| { libc::setsid(); Ok(()) }); }
+        unsafe {
+            cmd.pre_exec(|| {
+                libc::setsid();
+                Ok(())
+            });
+        }
         let _ = cmd.spawn().context("无法启动 daemon 进程")?;
     }
 
@@ -136,7 +142,8 @@ fn start_daemon() -> Result<()> {
             let _ = std::fs::create_dir_all(parent);
         }
         let (stdout_stdio, stderr_stdio) = std::fs::OpenOptions::new()
-            .create(true).append(true)
+            .create(true)
+            .append(true)
             .open(&log_path)
             .and_then(|f| f.try_clone().map(|g| (f, g)))
             .map(|(f, g)| (std::process::Stdio::from(f), std::process::Stdio::from(g)))
@@ -189,10 +196,11 @@ pub fn send(req: Request) -> Result<Response> {
 fn send_unix(req: Request) -> Result<Response> {
     use std::os::unix::net::UnixStream;
     let sock_path = config::sock_path();
-    let mut stream = UnixStream::connect(&sock_path)
-        .context("连接 daemon socket 失败")?;
+    let mut stream = UnixStream::connect(&sock_path).context("连接 daemon socket 失败")?;
     stream.set_read_timeout(Some(Duration::from_secs(120))).ok();
-    stream.set_write_timeout(Some(Duration::from_secs(120))).ok();
+    stream
+        .set_write_timeout(Some(Duration::from_secs(120)))
+        .ok();
 
     let req_str = serde_json::to_string(&req)? + "\n";
     stream.write_all(req_str.as_bytes())?;
@@ -201,8 +209,7 @@ fn send_unix(req: Request) -> Result<Response> {
     let mut reader = BufReader::new(&stream);
     reader.read_line(&mut line)?;
 
-    let resp: Response = serde_json::from_str(&line)
-        .context("解析 daemon 响应失败")?;
+    let resp: Response = serde_json::from_str(&line).context("解析 daemon 响应失败")?;
 
     if !resp.ok {
         bail!("{}", resp.error.as_deref().unwrap_or("未知错误"));
@@ -215,10 +222,10 @@ fn send_unix(req: Request) -> Result<Response> {
 fn send_windows(req: Request) -> Result<Response> {
     use interprocess::local_socket::{prelude::*, GenericNamespaced, Stream};
 
-    let name = "wx-cli-daemon".to_ns_name::<GenericNamespaced>()
+    let name = "wx-cli-daemon"
+        .to_ns_name::<GenericNamespaced>()
         .context("构造 pipe name 失败")?;
-    let stream = Stream::connect(name)
-        .context("连接 daemon named pipe 失败")?;
+    let stream = Stream::connect(name).context("连接 daemon named pipe 失败")?;
 
     // interprocess::Stream 同时实现 Read + Write，但需要拆分读写端
     let mut reader = BufReader::new(stream);
@@ -229,8 +236,7 @@ fn send_windows(req: Request) -> Result<Response> {
     let mut line = String::new();
     reader.read_line(&mut line)?;
 
-    let resp: Response = serde_json::from_str(&line)
-        .context("解析 daemon 响应失败")?;
+    let resp: Response = serde_json::from_str(&line).context("解析 daemon 响应失败")?;
 
     if !resp.ok {
         bail!("{}", resp.error.as_deref().unwrap_or("未知错误"));

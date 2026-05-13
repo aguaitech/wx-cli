@@ -1,7 +1,7 @@
-use anyhow::Result;
-use crate::ipc::Request;
-use super::transport;
 use super::history::{parse_time, parse_time_end};
+use super::transport;
+use crate::ipc::Request;
+use anyhow::Result;
 
 pub fn cmd_export(
     chat: String,
@@ -24,7 +24,10 @@ pub fn cmd_export(
     };
 
     let resp = transport::send(req)?;
-    let messages = resp.data["messages"].as_array().cloned().unwrap_or_default();
+    let messages = resp.data["messages"]
+        .as_array()
+        .cloned()
+        .unwrap_or_default();
     let chat_name = resp.data["chat"].as_str().unwrap_or("").to_string();
     let is_group = resp.data["is_group"].as_bool().unwrap_or(false);
     let count = messages.len();
@@ -33,12 +36,19 @@ pub fn cmd_export(
         "json" => serde_json::to_string_pretty(&resp.data)?,
         "txt" => {
             let group_str = if is_group { "[群]" } else { "" };
-            let mut lines = vec![format!("=== {}{} ({} 条) ===\n", chat_name, group_str, count)];
+            let mut lines = vec![format!(
+                "=== {}{} ({} 条) ===\n",
+                chat_name, group_str, count
+            )];
             for m in &messages {
                 let time = m["time"].as_str().unwrap_or("");
                 let sender = m["sender"].as_str().unwrap_or("");
                 let content = m["content"].as_str().unwrap_or("");
-                let sender_str = if !sender.is_empty() { format!("{}: ", sender) } else { String::new() };
+                let sender_str = if !sender.is_empty() {
+                    format!("{}: ", sender)
+                } else {
+                    String::new()
+                };
                 lines.push(format!("[{}] {}{}", time, sender_str, content));
             }
             lines.join("\n")
@@ -54,7 +64,11 @@ pub fn cmd_export(
                 let time = m["time"].as_str().unwrap_or("");
                 let sender = m["sender"].as_str().unwrap_or("");
                 let content = m["content"].as_str().unwrap_or("").replace('\n', "\n> ");
-                let sender_md = if !sender.is_empty() { format!("**{}**: ", sender) } else { String::new() };
+                let sender_md = if !sender.is_empty() {
+                    format!("**{}**: ", sender)
+                } else {
+                    String::new()
+                };
                 lines.push(format!("### {}\n\n{}{}\n", time, sender_md, content));
             }
             lines.join("\n")

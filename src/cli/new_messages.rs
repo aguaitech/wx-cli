@@ -1,8 +1,8 @@
+use super::output::{print_value, resolve};
+use super::transport;
+use crate::ipc::Request;
 use anyhow::Result;
 use std::collections::HashMap;
-use crate::ipc::Request;
-use super::transport;
-use super::output::{resolve, print_value};
 
 fn state_file() -> std::path::PathBuf {
     dirs::home_dir()
@@ -18,7 +18,8 @@ fn load_state() -> Option<HashMap<String, i64>> {
     let data = std::fs::read_to_string(state_file()).ok()?;
     let v: serde_json::Value = serde_json::from_str(&data).ok()?;
     // 旧格式（只有 timestamp 字段）没有 sessions key → 返回 None 触发首次运行逻辑
-    let map: HashMap<String, i64> = v.get("sessions")?
+    let map: HashMap<String, i64> = v
+        .get("sessions")?
         .as_object()?
         .iter()
         .filter_map(|(k, v)| v.as_i64().map(|ts| (k.clone(), ts)))
@@ -33,7 +34,10 @@ fn save_state(new_state: &HashMap<String, i64>) -> Result<()> {
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent)?;
     }
-    std::fs::write(&path, serde_json::to_string(&serde_json::json!({ "sessions": new_state }))?)?;
+    std::fs::write(
+        &path,
+        serde_json::to_string(&serde_json::json!({ "sessions": new_state }))?,
+    )?;
     Ok(())
 }
 
@@ -43,7 +47,8 @@ pub fn cmd_new_messages(limit: usize, json: bool) -> Result<()> {
 
     // 保存 daemon 返回的 new_state
     if let Some(obj) = resp.data.get("new_state").and_then(|v| v.as_object()) {
-        let map: HashMap<String, i64> = obj.iter()
+        let map: HashMap<String, i64> = obj
+            .iter()
             .filter_map(|(k, v)| v.as_i64().map(|ts| (k.clone(), ts)))
             .collect();
         if !map.is_empty() {
@@ -51,7 +56,9 @@ pub fn cmd_new_messages(limit: usize, json: bool) -> Result<()> {
         }
     }
 
-    let messages = resp.data.get("messages")
+    let messages = resp
+        .data
+        .get("messages")
         .cloned()
         .unwrap_or(serde_json::Value::Array(vec![]));
     print_value(&messages, &resolve(json))
